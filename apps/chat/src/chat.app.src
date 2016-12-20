@@ -1,0 +1,29 @@
+%%%=============================================================================
+%%%
+%%%               |  o __   _|  _  __  |_   _       _ _   (TM)
+%%%               |_ | | | (_| (/_ | | |_) (_| |_| | | |
+%%%
+%%% @author Sven Heyll <sven.heyll@lindenbaum.eu>
+%%% @author Tobias Schlager <tobias.schlager@lindenbaum.eu>
+%%% @author Timo Koepke <timo.koepke@lindenbaum.eu>
+%%% @copyright (C) 2016, Lindenbaum GmbH
+%%%
+%%%=============================================================================
+{application,
+ chat,
+ [
+  {description, "Chat backend for the Elm tutorial"},
+  {vsn, "1.0.0"},
+  {registered, []},
+  {mod, {chat, []}},
+  {applications,
+   [
+    kernel,
+    stdlib,
+    sasl,
+    jsx,
+    lbm_kv,
+    uuid
+   ]},
+  {env, []}
+ ]}.
