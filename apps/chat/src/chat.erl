@@ -18,7 +18,7 @@
 -behaviour(supervisor).
 
 %% API
--export([]).
+-export([id/0]).
 
 %% Application callbacks
 -export([start/2, stop/1]).
@@ -29,6 +29,15 @@
 %%%=============================================================================
 %%% API
 %%%=============================================================================
+
+%%------------------------------------------------------------------------------
+%% @doc
+%% Return a globally unique identifier. Currently based on a 128-bit version
+%% 4 UUID according to RFC 4122 using Wichmann-Hill 2006.
+%% @end
+%%------------------------------------------------------------------------------
+-spec id() -> binary().
+id() -> uuid:uuid_to_string(uuid:get_v4_urandom(), binary_standard).
 
 %%%=============================================================================
 %%% Application callbacks
@@ -52,9 +61,9 @@ stop(_State) -> ok.
 %% @private
 %%------------------------------------------------------------------------------
 init([]) ->
-    ok = chat_storage:init(),
-    {ok, Paths} = chat_rest:init(),
-    {ok, _} = cowboy_init(Paths),
+    {ok, ParticipantPaths} = chat_participant:init(),
+    {ok, RoomPaths} = chat_room:init(),
+    {ok, _} = cowboy_init(ParticipantPaths ++ RoomPaths),
     {ok, {{one_for_one, 5, 1}, []}}.
 
 %%%=============================================================================
