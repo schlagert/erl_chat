@@ -1,38 +1,46 @@
 %%%=============================================================================
+%%% Copyright 2016, Tobias Schlager <schlagert@github.com>
 %%%
-%%%               |  o __   _|  _  __  |_   _       _ _   (TM)
-%%%               |_ | | | (_| (/_ | | |_) (_| |_| | | |
+%%% Permission to use, copy, modify, and/or distribute this software for any
+%%% purpose with or without fee is hereby granted, provided that the above
+%%% copyright notice and this permission notice appear in all copies.
 %%%
-%%% @author Sven Heyll <sven.heyll@lindenbaum.eu>
-%%% @author Timo Koepke <timo.koepke@lindenbaum.eu>
-%%% @author Tobias Schlager <tobias.schlager@lindenbaum.eu>
-%%% @copyright (C) 2016, Lindenbaum GmbH
+%%% THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+%%% WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+%%% MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+%%% ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+%%% WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+%%% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+%%% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 %%%
 %%% @doc
+%%% Module implementing all user-centric functions. This include database
+%%% management of user as well as the REST interface to manipulate users.
 %%% @end
 %%%=============================================================================
 
--module(chat_participant).
+-module(chat_user).
 
 -behaviour(lbm_kv).
 
 %% API
--export([init/0]).
+-export([init/0,
+         exists/1]).
 
 %% lbm_kv callbacks
 -export([handle_conflict/3]).
 
 %% Cowboy callbacks
--export([init/2,
+-export([init/3,
          allowed_methods/2,
          content_types_accepted/2]).
 
 %% Cowboy handlers
 -export([process_post/2]).
 
--define(NAME, <<"Bort">>).
+-record(user, {name :: binary()}). %% private
 
--include("chat.hrl").
+-type ref() :: {Id :: binary(), Data :: #user{}}. %% opaque
 
 %%%=============================================================================
 %%% API
@@ -49,14 +57,27 @@ init() ->
         Error -> Error
     end.
 
+%%------------------------------------------------------------------------------
+%% @doc
+%% @end
+%%------------------------------------------------------------------------------
+-spec exists(ref()) -> boolean().
+exists({Id, Data}) ->
+    case lbm_kv:get(?MODULE, Id) of
+        {ok, [{Id, Data}]} -> true;
+        _                      -> false
+    end;
+exists(_) ->
+    false.
+
 %%%=============================================================================
 %%% lbm_kv Callbacks
 %%%=============================================================================
 
 %%------------------------------------------------------------------------------
 %% @private
-%% In case of conflict, we just keep the local participant and discard the
-%% remote one, who cares anyway...
+%% In case of conflict, we just keep the local user and discard the remote one,
+%% who cares anyway...
 %%------------------------------------------------------------------------------
 handle_conflict(_Id, Local, _Remote) -> {value, Local}.
 
@@ -67,7 +88,7 @@ handle_conflict(_Id, Local, _Remote) -> {value, Local}.
 %%------------------------------------------------------------------------------
 %% @private
 %%------------------------------------------------------------------------------
-init(Req, Opts) -> {cowboy_rest, Req, Opts}.
+init({tcp, http}, _Req, _Opts) -> {upgrade, protocol, cowboy_rest}.
 
 %%------------------------------------------------------------------------------
 %% @private
@@ -90,9 +111,10 @@ content_types_accepted(Req, State) ->
 process_post(Req, State) ->
     {Body, Req2} = cowboy_req:body(Req),
     Id = chat:id(),
-    Participant = decode(Body),
-    {ok, []} = lbm_kv:put(?MODULE, Id, Participant),
-    {encode(Id, Participant), Req2, State}.
+    {ok, {_, Data}} = decode(Body),
+    {ok, []} = lbm_kv:put(?MODULE, Id, Data),
+    error_logger:info_msg("Created user ~s with data ~128p", [Id, Data]),
+    {encode(Id, Data), Req2, State}.
 
 %%%=============================================================================
 %%% Internal functions
@@ -100,23 +122,19 @@ process_post(Req, State) ->
 
 %%------------------------------------------------------------------------------
 %% @private
-%% Leaves out the private `rooms'.
 %%------------------------------------------------------------------------------
-encode(Id, #participant{name = Name}) ->
-    jsx:encode([{id, Id}, {name, Name}]).
-
-%%------------------------------------------------------------------------------
-%% @private
-%% Generates a participant with empty `rooms'.
-%%------------------------------------------------------------------------------
-decode(JSON) ->
-    decode(jsx:is_json(JSON), JSON).
-decode(false, JSON) ->
-    #participant{name = ?NAME};
-decode(true, JSON) ->
-    #participant{name = get_value(<<"name">>, jsx:decode(JSON), ?NAME)}.
+encode(Id, #user{name = Name}) -> jsx:encode([{id, Id}, {name, Name}]).
 
 %%------------------------------------------------------------------------------
 %% @private
 %%------------------------------------------------------------------------------
-get_value(Key, Value, Default) -> proplists:get_value(Key, Value, Default).
+decode(JSON) when is_binary(JSON) ->
+    case jsx:is_json(JSON) of
+        true  ->
+            Decoded = jsx:decode(JSON),
+            Id = proplists:get_value(<<"id">>, Decoded),
+            Name = proplists:get_value(<<"name">>, Decoded),
+            {ok, {Id, #user{name = Name}}};
+        false ->
+            {error, {invalid_json, JSON}}
+    end.

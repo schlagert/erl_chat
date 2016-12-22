@@ -1,14 +1,21 @@
 %%%=============================================================================
+%%% Copyright 2016, Tobias Schlager <schlagert@github.com>
 %%%
-%%%               |  o __   _|  _  __  |_   _       _ _   (TM)
-%%%               |_ | | | (_| (/_ | | |_) (_| |_| | | |
+%%% Permission to use, copy, modify, and/or distribute this software for any
+%%% purpose with or without fee is hereby granted, provided that the above
+%%% copyright notice and this permission notice appear in all copies.
 %%%
-%%% @author Sven Heyll <sven.heyll@lindenbaum.eu>
-%%% @author Timo Koepke <timo.koepke@lindenbaum.eu>
-%%% @author Tobias Schlager <tobias.schlager@lindenbaum.eu>
-%%% @copyright (C) 2016, Lindenbaum GmbH
+%%% THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+%%% WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+%%% MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+%%% ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+%%% WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+%%% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+%%% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 %%%
 %%% @doc
+%%% Module implementing all room-centric functions. This include database
+%%% management of rooms as well as the REST interface to manipulate rooms.
 %%% @end
 %%%=============================================================================
 
@@ -23,7 +30,8 @@
 -export([handle_conflict/3]).
 
 %% Cowboy callbacks
--export([init/2,
+-export([init/3,
+         rest_init/2,
          allowed_methods/2,
          content_types_provided/2,
          content_types_accepted/2,
@@ -36,6 +44,10 @@
 -define(TITLE, <<"Title">>).
 
 -include("chat.hrl").
+
+-type ref() :: {Id :: binary(), Data :: #chat_room{}}.
+
+-export_type([ref/0]).
 
 %%%=============================================================================
 %%% API
@@ -63,8 +75,8 @@ init() ->
 
 %%------------------------------------------------------------------------------
 %% @private
-%% In case of conflict, we just keep the local room and discard the
-%% remote one, who cares anyway...
+%% In case of conflict, we just keep the local room and discard the remote one,
+%% who cares anyway...
 %%------------------------------------------------------------------------------
 handle_conflict(_Id, Local, _Remote) -> {value, Local}.
 
@@ -75,7 +87,12 @@ handle_conflict(_Id, Local, _Remote) -> {value, Local}.
 %%------------------------------------------------------------------------------
 %% @private
 %%------------------------------------------------------------------------------
-init(Req, Opts) -> {cowboy_rest, Req, Opts}.
+init({tcp, http}, _Req, _Opts) -> {upgrade, protocol, cowboy_rest}.
+
+%%------------------------------------------------------------------------------
+%% @private
+%%------------------------------------------------------------------------------
+rest_init(Req, _Opts) -> {ok, Req, undefined}.
 
 %%------------------------------------------------------------------------------
 %% @private
@@ -97,17 +114,17 @@ content_types_accepted(Req, State) ->
 %%------------------------------------------------------------------------------
 %% @private
 %%------------------------------------------------------------------------------
-resource_exists(Req, State) ->
+resource_exists(Req, _State) ->
     {Value, Req2} = cowboy_req:binding(room_id, Req),
-    {case Value of
-         undefined ->
-             true;
-         RoomId ->
-             case lbm_kv:get(?MODULE, RoomId) of
-                 {ok, [{RoomId, _Room}]} -> true;
-                 _                       -> false
-             end
-     end, Req2, State}.
+    case Value of
+        undefined ->
+            {true, Req2, undefined};
+        RoomId ->
+            case lbm_kv:get(?MODULE, RoomId) of
+                {ok, [{RoomId, Room}]} -> {true, Req2, Room};
+                _                      -> {false, Req2, undefined}
+            end
+    end.
 
 %%%=============================================================================
 %%% Cowboy handlers
@@ -116,18 +133,22 @@ resource_exists(Req, State) ->
 %%------------------------------------------------------------------------------
 %% @private
 %%------------------------------------------------------------------------------
-process_get(Req, State) ->
-    {<<"/chatroom", _/binary>>, Req2} = cowboy_req:path(Req),
-    {RoomId, Req3} = cowboy_req:binding(room_id, Req2),
-    {case RoomId of
-         undefined -> jsx:encode(chat_storage:rooms());
-         RoomId    -> jsx:encode(chat_storage:room(RoomId))
-     end, Req3, State}.
+process_get(Req, State = undefined) ->
+    {ok, Rooms} = lbm_kv:match_key(?MODULE, '_'),
+    {jsx:encode(lists:map(fun to_proplist/1, Rooms)), Req, State};
+process_get(Req, State = #chat_room{log = Log}) ->
+    {jsx:encode([{messageLog, join(Log, $\n)}]), Req, State}.
 
 %%------------------------------------------------------------------------------
 %% @private
 %%------------------------------------------------------------------------------
-process_post(Req, State) -> {true, Req, State}.
+process_post(Req, State) ->
+    {Body, Req2} = cowboy_req:body(Req),
+    Id = chat:id(),
+    {ok, {_, Data}} = decode(Body),
+    {ok, []} = lbm_kv:put(?MODULE, Id, Data),
+    error_logger:info_msg("Created room ~s with data ~128p", [Id, Data]),
+    {jsx:encode(to_proplist({Id, Data})), Req2, State}.
 
 %%%=============================================================================
 %%% Internal functions
@@ -135,23 +156,28 @@ process_post(Req, State) -> {true, Req, State}.
 
 %%------------------------------------------------------------------------------
 %% @private
-%% Leaves out the private `log'.
+%% Leaves out `log'.
 %%------------------------------------------------------------------------------
-encode(Id, #room{title = Title}) ->
-    jsx:encode([{id, Id}, {title, Title}]).
+to_proplist({Id, #chat_room{title = Title}}) -> [{id, Id}, {title, Title}].
 
 %%------------------------------------------------------------------------------
 %% @private
-%% Generates a room with empty `log'.
+%% Will have an empty `log'.
 %%------------------------------------------------------------------------------
-decode(JSON) ->
-    decode(jsx:is_json(JSON), JSON).
-decode(false, JSON) ->
-    #room{title = ?TITLE};
-decode(true, JSON) ->
-    #room{title = get_value(<<"title">>, jsx:decode(JSON), ?TITLE)}.
+decode(JSON) when is_binary(JSON) ->
+    case jsx:is_json(JSON) of
+        true  ->
+            Decoded = jsx:decode(JSON),
+            Id = proplists:get_value(<<"id">>, Decoded),
+            Title = proplists:get_value(<<"title">>, Decoded),
+            {ok, {Id, #chat_room{title = Title}}};
+        false ->
+            {error, {invalid_json, JSON}}
+    end.
 
 %%------------------------------------------------------------------------------
 %% @private
 %%------------------------------------------------------------------------------
-get_value(Key, Value, Default) -> proplists:get_value(Key, Value, Default).
+join(BinList, Sep)      -> join(BinList, Sep, <<>>).
+join([], _Sep, Acc)     -> Acc;
+join([H | T], Sep, Acc) -> join(T, Sep, <<Acc/binary, Sep, H/binary>>).

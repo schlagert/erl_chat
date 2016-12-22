@@ -5,13 +5,16 @@ JSON Data Types (as Elm types)
 ------------------------------
 
 ```elm
+type alias Id =
+    String
+
 type alias Participant =
-    { id : String
+    { id : Id
     , name : String
     }
 
 type alias ChatRoom =
-    { id : String
+    { id : Id
     , title : String
     }
 
@@ -27,9 +30,6 @@ type alias Message =
 type alias MessageLog =
     { messageLog : String
     }
-
-type alias Id =
-    String
 ```
 
 REST Services
@@ -46,13 +46,13 @@ REST Services
 * `POST "/participant"`
 
   Create a new participant with the specified name on the server. The id of
-  the new participant is returned in the response. Both direction use the
+  the new participant is returned in the response. Both directions use the
   `Participant` type.
 
 * `POST "/chatRoom"`
 
   Create a new chat room on the server with the specified title. The id of the
-  new room is returned in the response. Both direction use the `ChatRoom` type.
+  new room is returned in the response. Both directions use the `ChatRoom` type.
 
 WebSocket Service
 -----------------
@@ -70,12 +70,8 @@ The websocket understands the following messages:
 
   Send a message to the session's chat room.
 
-Examples
---------
+* Examples
 
-```
-registration:{"participant":{"id":5, "name":"Klaus"},
-              "chatRoom":{"id":3, "title":"Room 3"}}
+  `registration:{"participant":{"id":5, "name":"Bort"}, "chatRoom":{"id":3, "title":"People named Bort"}}`
 
-message:{"message":"Hallo an alle zusammen"}
-```
+  `message:{"message":"Hello World"}`
