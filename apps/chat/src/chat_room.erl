@@ -16,6 +16,9 @@
 %%% @doc
 %%% Module implementing all room-centric functions. This include database
 %%% management of rooms as well as the REST interface to manipulate rooms.
+%%%
+%%% Chat rooms have an id, an associated process group and contain the room's
+%%% message log. Group membership is modeled by process group membership.
 %%% @end
 %%%=============================================================================
 
@@ -24,7 +27,8 @@
 -behaviour(lbm_kv).
 
 %% API
--export([init/0]).
+-export([init/0,
+         get/1]).
 
 %% lbm_kv callbacks
 -export([handle_conflict/3]).
@@ -41,9 +45,7 @@
 -export([process_get/2,
          process_post/2]).
 
--define(TITLE, <<"Title">>).
-
--include("chat.hrl").
+-record(chat_room, {title :: binary(), log = [] :: [binary()]}). %% opaque
 
 -type ref() :: {Id :: binary(), Data :: #chat_room{}}.
 
@@ -55,6 +57,7 @@
 
 %%------------------------------------------------------------------------------
 %% @doc
+%% Initiates this modules database backend and returns the REST mappings.
 %% @end
 %%------------------------------------------------------------------------------
 -spec init() -> {ok, [tuple()]} | {error, term()}.
@@ -67,6 +70,21 @@ init() ->
                  ]};
         Error ->
             Error
+    end.
+
+%%------------------------------------------------------------------------------
+%% @doc
+%% Returns the chat associated with the given decoded JSON proplist. The
+%% `<<"id">>' key is used to look up the room.
+%% @end
+%%------------------------------------------------------------------------------
+-spec get(proplists:proplist()) -> {ok, ref()} | {error, term()}.
+get(Proplist) ->
+    Id = proplists:get_value(<<"id">>, Proplist),
+    case lbm_kv:get(?MODULE, Id) of
+        {ok, [Room = {Id, _}]} -> {ok, Room};
+        {ok, []}               -> {error, not_found};
+        Error                  -> Error
     end.
 
 %%%=============================================================================
@@ -147,6 +165,7 @@ process_post(Req, State) ->
     Id = chat:id(),
     {ok, {_, Data}} = decode(Body),
     {ok, []} = lbm_kv:put(?MODULE, Id, Data),
+    ok = pg2:create(Id),
     error_logger:info_msg("Created room ~s with data ~128p", [Id, Data]),
     {jsx:encode(to_proplist({Id, Data})), Req2, State}.
 

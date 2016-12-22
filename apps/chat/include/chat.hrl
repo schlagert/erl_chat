@@ -17,8 +17,4 @@
 -ifndef(chat_hrl_).
 -define(chat_hrl_, 1).
 
--record(chat_room, {
-          title    :: binary(),
-          log = [] :: [binary()]}).
-
 -endif. %% chat_hrl_

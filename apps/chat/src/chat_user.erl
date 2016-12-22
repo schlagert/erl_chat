@@ -16,6 +16,8 @@
 %%% @doc
 %%% Module implementing all user-centric functions. This include database
 %%% management of user as well as the REST interface to manipulate users.
+%%%
+%%% A user does basically exist and can be created and retrieved.
 %%% @end
 %%%=============================================================================
 
@@ -25,7 +27,7 @@
 
 %% API
 -export([init/0,
-         exists/1]).
+         get/1]).
 
 %% lbm_kv callbacks
 -export([handle_conflict/3]).
@@ -40,7 +42,9 @@
 
 -record(user, {name :: binary()}). %% private
 
--type ref() :: {Id :: binary(), Data :: #user{}}. %% opaque
+-type ref() :: {Id :: binary(), Data :: #user{}}.
+
+-export_type([ref/0]).
 
 %%%=============================================================================
 %%% API
@@ -48,6 +52,7 @@
 
 %%------------------------------------------------------------------------------
 %% @doc
+%% Initiates this modules database backend and returns the REST mappings.
 %% @end
 %%------------------------------------------------------------------------------
 -spec init() -> {ok, [tuple()]} | {error, term()}.
@@ -59,16 +64,18 @@ init() ->
 
 %%------------------------------------------------------------------------------
 %% @doc
+%% Returns the user associated with the given decoded JSON proplist. The
+%% `<<"id">>' key is used to look up the user.
 %% @end
 %%------------------------------------------------------------------------------
--spec exists(ref()) -> boolean().
-exists({Id, Data}) ->
+-spec get(proplists:proplist()) -> {ok, ref()} | {error, term()}.
+get(Proplist) ->
+    Id = proplists:get_value(<<"id">>, Proplist),
     case lbm_kv:get(?MODULE, Id) of
-        {ok, [{Id, Data}]} -> true;
-        _                      -> false
-    end;
-exists(_) ->
-    false.
+        {ok, [User = {Id, _}]} -> {ok, User};
+        {ok, []}               -> {error, not_found};
+        Error                  -> Error
+    end.
 
 %%%=============================================================================
 %%% lbm_kv Callbacks
